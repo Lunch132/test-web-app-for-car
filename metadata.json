@@ -1,0 +1,6 @@
+{
+  "name": "MiniCar AI Mission Control",
+  "description": "An AI-powered message analysis and summary dashboard for remote bot agents.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

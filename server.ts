@@ -2,6 +2,8 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
+import { GoogleGenAI } from "@google/genai";
+import "dotenv/config"; // Important for local deployment to read .env
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -11,6 +13,13 @@ async function startServer() {
   const PORT = 3000;
 
   app.use(express.json());
+
+  // Initialize Gemini if key is provided
+  let genAI: any = null;
+  if (process.env.GEMINI_API_KEY) {
+    genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    console.log("[SERVER] Gemini AI initialized with API Key.");
+  }
 
   // In-memory store for "incoming messages" from the internet
   let messages: any[] = [
@@ -47,15 +56,38 @@ async function startServer() {
     res.json(messages);
   });
 
-  // AI Analysis Proxy for Ollama (Local AI)
+  // AI Analysis Proxy: Tries Gemini first (if key exists), then Ollama (Local AI)
   app.post("/api/analyze", async (req, res) => {
     const { text } = req.body;
+
+    // --- Option A: Gemini (Cloud) ---
+    if (genAI) {
+      try {
+        console.log("[SERVER] Attempting Gemini analysis...");
+        const result = await genAI.models.generateContent({
+          model: "gemini-3-flash-preview",
+          contents: `你是一个智能小车分析助手。请分析指令并在JSON中返回: sentiment, urgency (low, medium, high), summary (中文总结), recommendation (中文建议)。指令内容: "${text}"。请务必返回严格的 JSON 格式，不要包含任何 Markdown 格式。`,
+          config: { responseMimeType: "application/json" }
+        });
+        
+        const responseText = result.text || "{}";
+        const cleanedJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+        const analysisData = JSON.parse(cleanedJson);
+        return res.json(analysisData);
+      } catch (geminiErr) {
+        console.error("[SERVER] Gemini failed, falling back to Ollama:", geminiErr);
+        // Continue to Ollama
+      }
+    }
+
+    // --- Option B: Ollama (Local) ---
     try {
+      console.log("[SERVER] Attempting Ollama analysis...");
       const ollamaResponse = await fetch("http://localhost:11434/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "llama3", // 你本地安装的模型名字
+          model: "llama3", 
           prompt: `你是一个智能小车分析助手。请分析指令并在JSON中返回: sentiment, urgency (low, medium, high), summary (中文总结), recommendation (中文建议)。指令内容: "${text}"`,
           stream: false,
           format: "json"
@@ -69,8 +101,8 @@ async function startServer() {
       }
       throw new Error("Ollama connection failed");
     } catch (err) {
-      console.error("[SERVER] AI Analysis Error:", err);
-      res.status(502).json({ error: "Local AI Offline" });
+      console.error("[SERVER] AI Analysis Final Error:", err);
+      res.status(502).json({ error: "AI Engine Offline", details: "Neither Gemini nor Ollama are available." });
     }
   });
 

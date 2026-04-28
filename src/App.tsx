@@ -538,7 +538,20 @@ export default function App() {
             </div>
 
             <div className="flex-1 flex flex-col gap-5 pt-2 overflow-y-auto custom-scrollbar">
-              {messages.filter(m => m.analysis).slice(-1).map((m) => (
+              {isAnalyzing && (
+                <div className="space-y-6 animate-pulse">
+                  <div className="space-y-2">
+                    <div className="h-3 w-24 bg-white/10 rounded" />
+                    <div className="h-12 bg-white/5 rounded border border-white/5" />
+                  </div>
+                  <div className="space-y-2">
+                    <div className="h-3 w-32 bg-white/10 rounded" />
+                    <div className="h-20 bg-white/5 rounded border border-white/5" />
+                  </div>
+                </div>
+              )}
+              
+              {!isAnalyzing && messages.filter(m => m.analysis).slice(-1).map((m) => (
                 <div key={m.id} className="space-y-6">
                   <div className="space-y-2">
                     <div className="text-[10px] text-slate-400 font-bold uppercase italic tracking-widest flex items-center gap-2">

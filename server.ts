@@ -77,56 +77,61 @@ async function startServer() {
 
       const prompt = `你是一个智能小车分析助手。${telemetryContext}请结合这些背景数据和用户的指令内容进行分析。指令内容: "${text}"。请在JSON中返回: sentiment, urgency (low, medium, high), summary (中文总结), recommendation (中文建议)。特别注意：如果硬件状态（如电池、负载、温度）存在异常，请在总结和建议中体现。请务必返回严格的 JSON 格式，不要包含任何 Markdown 格式。`;
 
-      const response = await fetch("https://ark.cn-beijing.volces.com/api/v3/responses", {
+      const response = await fetch("https://ark.cn-beijing.volces.com/api/v3/chat/completions", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`
+          "Authorization": `Bearer ${apiKey.trim()}`
         },
         body: JSON.stringify({
+          // 注意：火山引擎的 model 字段通常填写的是您的“推理终端 ID”(Endpoint ID)
+          // 如果报错 "model not found"，请将此处替换为您的 ep-xxxxx ID
           model: "doubao-seed-2-0-pro-260215",
-          input: [
+          messages: [
             {
               role: "user",
-              content: [
-                {
-                  type: "input_text",
-                  text: prompt
-                }
-              ]
+              content: prompt
             }
           ]
         })
       });
 
       if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`Ark API Error: ${response.status} - ${errText}`);
+        const errJson = await response.json().catch(() => ({}));
+        const errMessage = errJson.error?.message || await response.text();
+        console.error("[SERVER] Ark API Error Detail:", JSON.stringify(errJson));
+        throw new Error(`火山引擎返回错误: ${errMessage}`);
       }
 
       const data = await response.json();
-      console.log("[SERVER] Ark Response received");
+      console.log("[SERVER] Ark Response received:", JSON.stringify(data).substring(0, 200) + "...");
 
-      // The structure based on the curl might vary slightly in the response.
-      // Usually, it's data.choices[0].message.content or similar for OpenAI-like, 
-      // but let's see how Ark responds. Based on their docs/standard it might be data.output.text or similar.
-      // However, the user's curl showed 'responses' endpoint which might be specific.
-      // I'll try to extract the text content safely.
       let resultText = "";
-      if (data.output && data.output.text) {
-        resultText = data.output.text;
-      } else if (data.choices && data.choices[0] && data.choices[0].message) {
+      if (data.choices && data.choices[0] && data.choices[0].message) {
         resultText = data.choices[0].message.content;
-      } else if (data.result) {
-        resultText = data.result;
+      } else if (data.output && data.output.text) { 
+        // 兼容 /api/v3/responses 格式
+        resultText = data.output.text;
       } else {
-        // Fallback or debug
         resultText = JSON.stringify(data);
       }
       
-      const cleanedJson = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
-      const analysisData = JSON.parse(cleanedJson);
-      return res.json(analysisData);
+      // 更加彻底的 JSON 清洗正则
+      const cleanedJson = resultText.replace(/```json\s?|```/g, '').trim();
+      
+      try {
+        const analysisData = JSON.parse(cleanedJson);
+        return res.json(analysisData);
+      } catch (parseErr) {
+        console.error("[SERVER] AI response is not valid JSON:", resultText);
+        // 如果不是 JSON，尝试构建一个简单的 JSON 返回给前端
+        return res.json({
+          sentiment: "neutral",
+          urgency: "medium",
+          summary: "AI 返回格式异常",
+          recommendation: resultText.substring(0, 100)
+        });
+      }
     } catch (err: any) {
       console.error("[SERVER] Ark Analysis Error:", err);
       res.status(500).json({ error: "Cloud AI Error", details: err.message });

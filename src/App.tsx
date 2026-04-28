@@ -4,7 +4,6 @@
  */
 
 import React, { useState, useEffect, useRef } from "react";
-import { GoogleGenAI } from "@google/genai";
 import { 
   Bot, 
   Wifi, 
@@ -42,9 +41,6 @@ import { twMerge } from "tailwind-merge";
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
-
-// --- AI Initialization ---
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 // --- Types ---
 interface Message {
@@ -169,16 +165,20 @@ export default function App() {
       if (!res.ok) throw new Error("Server communication failed");
       const newMessage = await res.json();
       
-      console.log("Analyzing message with AI...");
+      console.log("Analyzing message with AI (Backend Cloud AI)...");
       setIsAnalyzing(true);
       
       const analysisRes = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, telemetry }),
       });
 
-      if (!analysisRes.ok) throw new Error("AI analysis service unavailable");
+      if (!analysisRes.ok) {
+        const errorData = await analysisRes.json();
+        throw new Error(errorData.details || "AI analysis service failed");
+      }
+      
       const analysisData = await analysisRes.json();
 
       console.log("Analysis complete:", analysisData);
@@ -360,7 +360,7 @@ export default function App() {
             网络: <span className="text-emerald-400">已连接 [5G_卫星]</span>
           </div>
           <div className="flex items-center gap-2">
-            AI 状态: <span className="text-cyan-400">运行中 [v4.2.0]</span>
+            AI 状态: <span className="text-cyan-400">豆包·云端神经链路 [Active]</span>
           </div>
           <div className="flex items-center gap-2">
             电量: <span className={cn(telemetry.battery < 20 ? "text-red-400 animate-pulse" : "text-cyan-400")}>{telemetry.battery}%</span>

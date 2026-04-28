@@ -2,7 +2,6 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
-import { GoogleGenAI } from "@google/genai";
 import "dotenv/config"; // Important for local deployment to read .env
 
 const __filename = fileURLToPath(import.meta.url);
@@ -13,13 +12,6 @@ async function startServer() {
   const PORT = 3000;
 
   app.use(express.json());
-
-  // Initialize Gemini if key is provided
-  let genAI: any = null;
-  if (process.env.GEMINI_API_KEY) {
-    genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-    console.log("[SERVER] Gemini AI initialized with API Key.");
-  }
 
   // In-memory store for "incoming messages" from the internet
   let messages: any[] = [
@@ -39,6 +31,13 @@ async function startServer() {
     lon: 139.6917
   };
 
+  // API to receive telemetry from the car
+  app.post("/api/update_telemetry", (req, res) => {
+    const newData = req.body;
+    telemetry = { ...telemetry, ...newData };
+    res.json({ status: "ok", telemetry });
+  });
+
   // API to get current telemetry
   app.get("/api/telemetry", (req, res) => {
     res.json(telemetry);
@@ -56,53 +55,81 @@ async function startServer() {
     res.json(messages);
   });
 
-  // AI Analysis Proxy: Tries Gemini first (if key exists), then Ollama (Local AI)
+  // AI Analysis Proxy: Uses Volcengine (Doubao) Ark API
   app.post("/api/analyze", async (req, res) => {
-    const { text } = req.body;
+    const { text, telemetry: currentTelemetry } = req.body;
+    const apiKey = process.env.ARK_API_KEY;
 
-    // --- Option A: Gemini (Cloud) ---
-    if (genAI) {
-      try {
-        console.log("[SERVER] Attempting Gemini analysis...");
-        const result = await genAI.models.generateContent({
-          model: "gemini-3-flash-preview",
-          contents: `你是一个智能小车分析助手。请分析指令并在JSON中返回: sentiment, urgency (low, medium, high), summary (中文总结), recommendation (中文建议)。指令内容: "${text}"。请务必返回严格的 JSON 格式，不要包含任何 Markdown 格式。`,
-          config: { responseMimeType: "application/json" }
-        });
-        
-        const responseText = result.text || "{}";
-        const cleanedJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-        const analysisData = JSON.parse(cleanedJson);
-        return res.json(analysisData);
-      } catch (geminiErr) {
-        console.error("[SERVER] Gemini failed, falling back to Ollama:", geminiErr);
-        // Continue to Ollama
-      }
+    if (!apiKey) {
+      console.error("[SERVER] ARK_API_KEY is missing");
+      return res.status(503).json({ 
+        error: "AI Config Missing", 
+        details: "ARK_API_KEY is not configured in .env file." 
+      });
     }
 
-    // --- Option B: Ollama (Local) ---
     try {
-      console.log("[SERVER] Attempting Ollama analysis...");
-      const ollamaResponse = await fetch("http://localhost:11434/api/generate", {
+      console.log("[SERVER] Executing Cloud AI analysis via Volcengine Ark...");
+      
+      const telemetryContext = currentTelemetry ? 
+        `当前硬件状态: 速度 ${currentTelemetry.speed}m/s, CPU负载 ${currentTelemetry.cpu}%, 电池 ${currentTelemetry.battery}%, 环境温度 ${currentTelemetry.temp}°C, 湿度 ${currentTelemetry.humidity}%, 土壤板结度 ${currentTelemetry.soil}%。` : 
+        "";
+
+      const prompt = `你是一个智能小车分析助手。${telemetryContext}请结合这些背景数据和用户的指令内容进行分析。指令内容: "${text}"。请在JSON中返回: sentiment, urgency (low, medium, high), summary (中文总结), recommendation (中文建议)。特别注意：如果硬件状态（如电池、负载、温度）存在异常，请在总结和建议中体现。请务必返回严格的 JSON 格式，不要包含任何 Markdown 格式。`;
+
+      const response = await fetch("https://ark.cn-beijing.volces.com/api/v3/responses", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`
+        },
         body: JSON.stringify({
-          model: "llama3", 
-          prompt: `你是一个智能小车分析助手。请分析指令并在JSON中返回: sentiment, urgency (low, medium, high), summary (中文总结), recommendation (中文建议)。指令内容: "${text}"`,
-          stream: false,
-          format: "json"
-        }),
+          model: "doubao-seed-2-0-pro-260215",
+          input: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "input_text",
+                  text: prompt
+                }
+              ]
+            }
+          ]
+        })
       });
 
-      if (ollamaResponse.ok) {
-        const data = await ollamaResponse.json();
-        const result = JSON.parse(data.response);
-        return res.json(result);
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`Ark API Error: ${response.status} - ${errText}`);
       }
-      throw new Error("Ollama connection failed");
-    } catch (err) {
-      console.error("[SERVER] AI Analysis Final Error:", err);
-      res.status(502).json({ error: "AI Engine Offline", details: "Neither Gemini nor Ollama are available." });
+
+      const data = await response.json();
+      console.log("[SERVER] Ark Response received");
+
+      // The structure based on the curl might vary slightly in the response.
+      // Usually, it's data.choices[0].message.content or similar for OpenAI-like, 
+      // but let's see how Ark responds. Based on their docs/standard it might be data.output.text or similar.
+      // However, the user's curl showed 'responses' endpoint which might be specific.
+      // I'll try to extract the text content safely.
+      let resultText = "";
+      if (data.output && data.output.text) {
+        resultText = data.output.text;
+      } else if (data.choices && data.choices[0] && data.choices[0].message) {
+        resultText = data.choices[0].message.content;
+      } else if (data.result) {
+        resultText = data.result;
+      } else {
+        // Fallback or debug
+        resultText = JSON.stringify(data);
+      }
+      
+      const cleanedJson = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
+      const analysisData = JSON.parse(cleanedJson);
+      return res.json(analysisData);
+    } catch (err: any) {
+      console.error("[SERVER] Ark Analysis Error:", err);
+      res.status(500).json({ error: "Cloud AI Error", details: err.message });
     }
   });
 

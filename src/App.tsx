@@ -337,20 +337,7 @@ export default function App() {
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 mt-2">
-                    <button 
-                      onClick={() => simulateUpdate({ lat: telemetry.lat + 0.001 })}
-                      className="py-1 bg-white/5 rounded border border-white/10 text-[8px] hover:bg-white/10"
-                    >
-                      向北移动
-                    </button>
-                    <button 
-                      onClick={() => simulateUpdate({ lon: telemetry.lon + 0.001 })}
-                      className="py-1 bg-white/5 rounded border border-white/10 text-[8px] hover:bg-white/10"
-                    >
-                      向东移动
-                    </button>
-                  </div>
+                  {/* Remove movement buttons for cleaner UI */}
                 </div>
               </motion.div>
             )}
@@ -590,13 +577,6 @@ export default function App() {
                 </div>
               )}
             </div>
-
-            <button 
-              onClick={() => fetchMessages()}
-              className="w-full py-3 bg-cyan-600 hover:bg-cyan-500 text-black text-[10px] font-black uppercase tracking-[0.2em] rounded transition-all shadow-[0_4px_12px_rgba(8,145,178,0.4)] flex items-center justify-center gap-2 active:scale-[0.98]"
-            >
-              <RefreshCcw size={12} /> 授权数据同步刷新
-            </button>
           </div>
         </section>
       </main>
